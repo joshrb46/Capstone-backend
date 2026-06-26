@@ -130,8 +130,27 @@ CREATE TABLE chat_messages (
 
 CREATE INDEX idx_chat_messages_round_created ON chat_messages(round_id, created_at);
 
+CREATE TABLE lobby_bans (
+    lobby_id    INTEGER REFERENCES lobby(id) ON DELETE CASCADE,
+    player_id   INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    banned_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (lobby_id, player_id)
+);
+
+
 CREATE FUNCTION kick_player(
     p_lobby_id   INTEGER,
     p_host_id    INTEGER,
     p_target_id  INTEGER
 ) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_actual_host_id INTEGER;
+BEGIN
+    -- 1. Find the current host of the lobby
+    SELECT host_id INTO v_actual_host_id 
+    FROM lobby 
+    WHERE id = p_lobby_id;
+ IF v_actual_host_id IS NULL OR v_actual_host_id != p_host_id THEN
+        RAISE EXCEPTION 'Unauthorized: Only the lobby host can kick players.';
+    END IF;
