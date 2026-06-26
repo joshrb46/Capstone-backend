@@ -7,7 +7,7 @@ DROP TABLE IF EXISTS lobby_players;
 DROP TABLE IF EXISTS lobby;
 DROP TABLE IF EXISTS words;
 DROP TABLE IF EXISTS users;
-
+DROP TABLE IF EXISTS kick_player;
 
 -- USERS
 
