@@ -129,3 +129,9 @@ CREATE TABLE chat_messages (
 );
 
 CREATE INDEX idx_chat_messages_round_created ON chat_messages(round_id, created_at);
+
+CREATE FUNCTION kick_player(
+    p_lobby_id   INTEGER,
+    p_host_id    INTEGER,
+    p_target_id  INTEGER
+) 
