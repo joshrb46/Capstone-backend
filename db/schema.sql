@@ -155,3 +155,20 @@ BEGIN
  IF v_actual_host_id IS NULL OR v_actual_host_id != p_host_id THEN
         RAISE EXCEPTION 'Unauthorized: Only the lobby host can kick players.';
     END IF;
+     -- 2. Prevent self-kicking
+    IF p_host_id = p_target_id THEN
+        RAISE EXCEPTION 'Bad Request: Host cannot kick themselves.';
+    END IF;
+
+    -- 3. Log the permanent ban
+    INSERT INTO lobby_bans (lobby_id, player_id)
+    VALUES (p_lobby_id, p_target_id)
+    ON CONFLICT (lobby_id, player_id) DO NOTHING;
+
+    -- 4. Remove the player from the lobby
+    DELETE FROM lobby_players 
+    WHERE lobby_id = p_lobby_id AND player_id = p_target_id;
+
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
