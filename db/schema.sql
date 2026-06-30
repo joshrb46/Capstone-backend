@@ -7,7 +7,10 @@ DROP TABLE IF EXISTS lobby_players;
 DROP TABLE IF EXISTS lobby;
 DROP TABLE IF EXISTS words;
 DROP TABLE IF EXISTS users;
-
+DROP TABLE IF EXISTS kick_player;
+DROP TABLE IF EXISTS lobby_bans;
+DROP TRIGGER IF EXISTS enforce_lobby_ban ON lobby_players;
+DROP FUNCTION IF EXISTS check_lobby_ban();
 
 -- USERS
 
@@ -129,3 +132,65 @@ CREATE TABLE chat_messages (
 );
 
 CREATE INDEX idx_chat_messages_round_created ON chat_messages(round_id, created_at);
+
+CREATE TABLE lobby_bans (
+    lobby_id    INTEGER REFERENCES lobby(id) ON DELETE CASCADE,
+    player_id   INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    banned_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (lobby_id, player_id)
+);
+
+
+CREATE FUNCTION kick_player(
+    p_lobby_id   INTEGER,
+    p_host_id    INTEGER,
+    p_target_id  INTEGER
+) 
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_actual_host_id INTEGER;
+BEGIN
+    -- 1. Find the current host of the lobby
+    SELECT host_id INTO v_actual_host_id 
+    FROM lobby 
+    WHERE id = p_lobby_id;
+ IF v_actual_host_id IS NULL OR v_actual_host_id != p_host_id THEN
+        RAISE EXCEPTION 'Unauthorized: Only the lobby host can kick players.';
+    END IF;
+     -- 2. Prevent self-kicking
+    IF p_host_id = p_target_id THEN
+        RAISE EXCEPTION 'Bad Request: Host cannot kick themselves.';
+    END IF;
+
+    -- 3. Log the permanent ban
+    INSERT INTO lobby_bans (lobby_id, player_id)
+    VALUES (p_lobby_id, p_target_id)
+    ON CONFLICT (lobby_id, player_id) DO NOTHING;
+
+    -- 4. Remove the player from the lobby
+    DELETE FROM lobby_players 
+    WHERE lobby_id = p_lobby_id AND player_id = p_target_id;
+
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION check_lobby_ban() 
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Check if the player is in the ban list for this lobby
+    IF EXISTS (
+        SELECT 1 FROM lobby_bans 
+        WHERE lobby_id = NEW.lobby_id AND player_id = NEW.player_id
+    ) THEN
+        RAISE EXCEPTION 'Access Denied: You have been permanently banned from this lobby.';
+    END IF;
+     RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Attach the trigger to the player relationship table
+CREATE TRIGGER enforce_lobby_ban
+BEFORE INSERT ON lobby_players
+FOR EACH ROW 
+EXECUTE FUNCTION check_lobby_ban();
