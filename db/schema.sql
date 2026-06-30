@@ -9,6 +9,8 @@ DROP TABLE IF EXISTS words;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS kick_player;
 DROP TABLE IF EXISTS lobby_bans;
+DROP TRIGGER IF EXISTS enforce_lobby_ban ON lobby_players;
+DROP FUNCTION IF EXISTS check_lobby_ban();
 
 -- USERS
 
@@ -172,3 +174,23 @@ BEGIN
     RETURN FOUND;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE FUNCTION check_lobby_ban() 
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Check if the player is in the ban list for this lobby
+    IF EXISTS (
+        SELECT 1 FROM lobby_bans 
+        WHERE lobby_id = NEW.lobby_id AND player_id = NEW.player_id
+    ) THEN
+        RAISE EXCEPTION 'Access Denied: You have been permanently banned from this lobby.';
+    END IF;
+     RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Attach the trigger to the player relationship table
+CREATE TRIGGER enforce_lobby_ban
+BEFORE INSERT ON lobby_players
+FOR EACH ROW 
+EXECUTE FUNCTION check_lobby_ban();
