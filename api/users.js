@@ -17,8 +17,9 @@ router
       }
 
       const user = await createUser(username, avatarType, avatarValue);
-      // Client stores user.id and sends it back as the x-user-id header
-      // on subsequent requests. No password / JWT in this app.
+      // Client stores user.session_token and sends it back as the
+      // x-session-token header on subsequent requests. No password / JWT
+      // in this app. This is the only response that includes the token.
       res.status(201).send(user);
     },
   );
@@ -26,5 +27,7 @@ router
 router.route("/:id").get(async (req, res) => {
   const user = await getUserById(req.params.id);
   if (!user) return res.status(404).send("User not found.");
-  res.send(user);
+  // Never expose another user's session_token via the public lookup route.
+  const { session_token, ...publicUser } = user;
+  res.send(publicUser);
 });
