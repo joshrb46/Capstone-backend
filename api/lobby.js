@@ -15,6 +15,7 @@ import {
   updateLobbyStatus,
 } from "#db/queries/lobby";
 import { createMatch } from "#db/queries/matches";
+import { getIO } from "#socket";
 
 router.use(requireUser);
 
@@ -44,6 +45,10 @@ router.route("/:code/players").post(async (req, res) => {
   }
 
   const player = await addPlayerToLobby(lobby.id, req.user.id);
+
+  const players = await getLobbyPlayers(lobby.id);
+  getIO().to(`lobby:${lobby.code}`).emit("lobby:players", players);
+
   res.status(201).send(player);
 });
 
@@ -53,6 +58,10 @@ router.route("/:code/players/me").delete(async (req, res) => {
 
   const player = await removePlayerFromLobby(lobby.id, req.user.id);
   if (!player) return res.status(404).send("You are not in this lobby.");
+
+  const players = await getLobbyPlayers(lobby.id);
+  getIO().to(`lobby:${lobby.code}`).emit("lobby:players", players);
+
   res.send(player);
 });
 
@@ -69,5 +78,10 @@ router.route("/:code/start").post(async (req, res) => {
 
   await updateLobbyStatus(lobby.id, "in_progress");
   const match = await createMatch(lobby.id);
+
+  getIO().to(`lobby:${lobby.code}`).emit("lobby:match_started", {
+    matchId: match.id,
+  });
+
   res.status(201).send(match);
 });
