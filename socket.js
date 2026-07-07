@@ -1,8 +1,11 @@
 import { Server } from "socket.io";
-import { getUserById } from "#db/queries/users";
+import { getUserBySessionToken } from "#db/queries/users";
 import { getLobbyByCode, addPlayerToLobby, setPlayerConnected, getLobbyPlayers } from "#db/queries/lobby";
-import { createChatMessage } from "#db/queries/chatMessages";
+import { submitGuess } from "#db/queries/scoring";
 import { getRoundById } from "#db/queries/rounds";
+import { getWordById } from "#db/queries/words";
+import { isPlayerInMatch } from "#db/queries/matches";
+import { maskMessageForViewer } from "#lib/scoring";
 
 let io;
 
@@ -13,13 +16,21 @@ export function initSocket(httpServer) {
   });
 
   io.on("connection", (socket) => {
-    // Client identifies itself right after connecting, same x-user-id
-    // pattern as REST: no separate socket auth scheme.
-    socket.on("identify", async ({ userId }) => {
-      const user = await getUserById(userId).catch(() => null);
-      if (!user) return socket.emit("error:identify", "Invalid user id.");
+    // Client identifies itself right after connecting, same x-session-token
+    // pattern as REST: no separate socket auth scheme. Takes an optional
+    // ack callback so the client can wait for this to actually finish
+    // before emitting anything that depends on socket.data.userId being
+    // set (e.g. lobby:join) — otherwise a fast client could fire the next
+    // event before this async handler resolves.
+    socket.on("identify", async ({ sessionToken }, ack) => {
+      const user = await getUserBySessionToken(sessionToken).catch(() => null);
+      if (!user) {
+        socket.emit("error:identify", "Invalid session token.");
+        return ack?.({ ok: false });
+      }
       socket.data.userId = user.id;
       socket.data.username = user.username;
+      ack?.({ ok: true });
     });
 
     // Joins the Socket.IO room for a lobby (room name = lobby code),
@@ -52,6 +63,21 @@ export function initSocket(httpServer) {
       socket.leave(`match:${matchId}`);
     });
 
+    // Drawing sync — the drawer emits these; the backend rebroadcasts to
+    // everyone else in the match room. No DB writes: strokes are ephemeral.
+    // draw:stroke carries one point in the current path; type is "start"|"move"|"end".
+    socket.on("draw:stroke", ({ matchId, ...data }) => {
+      if (!socket.data.userId) return;
+      socket.to(`match:${matchId}`).emit("draw:stroke", data);
+    });
+
+    // draw:clear is emitted when the drawer clears the canvas so guessers
+    // wipe theirs too.
+    socket.on("draw:clear", ({ matchId }) => {
+      if (!socket.data.userId) return;
+      socket.to(`match:${matchId}`).emit("draw:clear");
+    });
+
     // Optional socket-native chat path (REST POST /rounds/:id/messages also works).
     socket.on("chat:send", async ({ roundId, message }) => {
       if (!socket.data.userId) {
@@ -61,11 +87,37 @@ export function initSocket(httpServer) {
       const round = await getRoundById(roundId).catch(() => null);
       if (!round) return socket.emit("error:chat_send", "Round not found.");
 
-      const chatMessage = await createChatMessage(roundId, socket.data.userId, message);
-      io.to(`match:${round.match_id}`).emit("chat:message", {
-        ...chatMessage,
-        username: socket.data.username,
+      const isMember = await isPlayerInMatch(round.match_id, socket.data.userId).catch(() => false);
+      if (!isMember) {
+        return socket.emit("error:chat_send", "You are not a player in this match.");
+      }
+
+      const word = round.word_id ? await getWordById(round.word_id) : null;
+      const { chatMessage, correct, points, drawerBonus } = await submitGuess({
+        round,
+        word,
+        userId: socket.data.userId,
+        message,
       });
+
+      const payload = { ...chatMessage, username: socket.data.username };
+
+      // Sender gets the unmasked message directly; everyone else in the
+      // room gets a masked copy so the chat feed can't leak the answer.
+      socket.emit("chat:message", payload);
+      socket
+        .to(`match:${round.match_id}`)
+        .emit("chat:message", maskMessageForViewer(payload, null, round));
+
+      if (correct) {
+        io.to(`match:${round.match_id}`).emit("round:correct_guess", {
+          roundId: round.id,
+          userId: socket.data.userId,
+          username: socket.data.username,
+          points,
+          drawerBonus,
+        });
+      }
     });
 
     socket.on("disconnect", async () => {
