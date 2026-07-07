@@ -5,7 +5,9 @@ import { initSocket } from "#socket";
 
 const PORT = process.env.PORT ?? 3000;
 
-await db.connect();
+// Sanity-check the connection string at startup rather than waiting for
+// the first request to fail. Pool itself connects lazily per-query.
+await db.query("SELECT 1");
 
 const httpServer = http.createServer(app);
 initSocket(httpServer);
