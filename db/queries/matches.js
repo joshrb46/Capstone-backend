@@ -55,6 +55,16 @@ export async function getMatchPlayers(matchId) {
   return rows;
 }
 
+/** True if userId is seeded into match_players for this match. */
+export async function isPlayerInMatch(matchId, userId) {
+  const sql = `
+  SELECT 1 FROM match_players
+  WHERE match_id = $1 AND user_id = $2
+  `;
+  const { rows } = await db.query(sql, [matchId, userId]);
+  return rows.length > 0;
+}
+
 export async function incrementScore(matchId, userId, points) {
   const sql = `
   UPDATE match_players
