@@ -38,6 +38,7 @@ The seed script prints a sample lobby join code on success.
 | DELETE | `/lobby/:code/players/me` | leave a lobby                                                       |
 | POST   | `/lobby/:code/start`      | host-only, creates a `matches` row                                  |
 | GET    | `/matches/:id`            | match + player scores                                               |
+| GET    | `/matches/lobby/:lobbyId` | most recent match for a lobby (for clients recovering state)        |
 | POST   | `/matches/:id/end`        | host-only, ranks players, sets winner                               |
 | GET    | `/rounds/match/:matchId`  | list rounds for a match                                             |
 | POST   | `/rounds/match/:matchId`  | body: `{ roundNumber, drawerId, durationSeconds? }`                 |
