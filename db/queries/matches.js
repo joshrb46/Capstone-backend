@@ -1,61 +1,116 @@
-import express from "express";
-const router = express.Router();
-export default router;
+import db from "#db/client";
 
-import requireUser from "#middleware/requireUser";
-import {
-  isPlayerInMatch,
-  getMatchById,
-  getMatchesByLobby,
-  getMatchPlayers,
-  endMatch,
-} from "#db/queries/matches";
-import { getLobbyById, isPlayerInLobby } from "#db/queries/lobby";
-import { getIO } from "#socket";
+/** Creates a match for a lobby and seeds match_players from current lobby players. */
+export async function createMatch(lobbyId) {
+  const sql = `
+  INSERT INTO matches
+    (lobby_id)
+  VALUES
+    ($1)
+  RETURNING *
+  `;
+  const {
+    rows: [match],
+  } = await db.query(sql, [lobbyId]);
 
-router.use(requireUser);
+  const seedSql = `
+  INSERT INTO match_players
+    (match_id, user_id)
+  SELECT $1, user_id
+  FROM lobby_players
+  WHERE lobby_id = $2 AND connected = true
+  `;
+  await db.query(seedSql, [match.id, lobbyId]);
 
-/** Most recent match for a lobby — lets a client that (re)loads the page
- * recover the active/last match id without having caught the socket event. */
-router.route("/lobby/:lobbyId").get(async (req, res) => {
-  const inLobby = await isPlayerInLobby(req.params.lobbyId, req.user.id);
-  if (!inLobby)
-    return res.status(403).send("You are not a player in this lobby.");
+  return match;
+}
 
-  const matches = await getMatchesByLobby(req.params.lobbyId);
-  if (matches.length === 0)
-    return res.status(404).send("No matches for this lobby yet.");
-  res.send(matches[0]);
-});
+export async function getMatchById(id) {
+  const sql = `SELECT * FROM matches WHERE id = $1`;
+  const {
+    rows: [match],
+  } = await db.query(sql, [id]);
+  return match;
+}
 
-router.route("/:id").get(async (req, res) => {
-  const match = await getMatchById(req.params.id);
-  if (!match) return res.status(404).send("Match not found.");
+export async function getMatchesByLobby(lobbyId) {
+  const sql = `
+  SELECT * FROM matches
+  WHERE lobby_id = $1
+  ORDER BY started_at DESC
+  `;
+  const { rows } = await db.query(sql, [lobbyId]);
+  return rows;
+}
 
-  const isMember = await isPlayerInMatch(match.id, req.user.id);
-  if (!isMember) {
-    return res.status(403).send("You are not a player in this match.");
-  }
+export async function getMatchPlayers(matchId) {
+  const sql = `
+  SELECT match_players.*, users.username, users.avatar_type, users.avatar_value
+  FROM match_players
+  JOIN users ON users.id = match_players.user_id
+  WHERE match_players.match_id = $1
+  ORDER BY match_players.score DESC
+  `;
+  const { rows } = await db.query(sql, [matchId]);
+  return rows;
+}
 
-  const players = await getMatchPlayers(match.id);
-  res.send({ ...match, players });
-});
+/** True if userId is seeded into match_players for this match. */
+export async function isPlayerInMatch(matchId, userId) {
+  const sql = `
+  SELECT 1 FROM match_players
+  WHERE match_id = $1 AND user_id = $2
+  `;
+  const { rows } = await db.query(sql, [matchId, userId]);
+  return rows.length > 0;
+}
 
-router.route("/:id/end").post(async (req, res) => {
-  const match = await getMatchById(req.params.id);
-  if (!match) return res.status(404).send("Match not found.");
+export async function incrementScore(matchId, userId, points) {
+  const sql = `
+  UPDATE match_players
+  SET score = score + $3
+  WHERE match_id = $1 AND user_id = $2
+  RETURNING *
+  `;
+  const {
+    rows: [player],
+  } = await db.query(sql, [matchId, userId, points]);
+  return player;
+}
 
-  const lobby = await getLobbyById(match.lobby_id);
-  if (lobby.host_id !== req.user.id) {
-    return res.status(403).send("Only the host can end the match.");
-  }
+/** Ends a match and assigns final_rank based on score (1 = highest). */
+export async function endMatch(matchId) {
+  const rankSql = `
+  WITH ranked AS (
+    SELECT user_id, RANK() OVER (ORDER BY score DESC) AS rnk
+    FROM match_players
+    WHERE match_id = $1
+  )
+  UPDATE match_players
+  SET final_rank = ranked.rnk
+  FROM ranked
+  WHERE match_players.match_id = $1
+    AND match_players.user_id = ranked.user_id
+  `;
+  await db.query(rankSql, [matchId]);
 
-  const ended = await endMatch(match.id);
-  const players = await getMatchPlayers(match.id);
+  const winnerSql = `
+  SELECT user_id FROM match_players
+  WHERE match_id = $1 AND final_rank = 1
+  LIMIT 1
+  `;
+  const {
+    rows: [winner],
+  } = await db.query(winnerSql, [matchId]);
 
-  getIO()
-    .to(`match:${match.id}`)
-    .emit("match:ended", { ...ended, players });
-
-  res.send(ended);
-});
+  const sql = `
+  UPDATE matches
+  SET status = 'finished', ended_at = now(), winner_id = $2
+  WHERE id = $1
+  RETURNING *
+  `;
+  const {
+    rows: [match],
+  } = await db.query(sql, [matchId, winner?.user_id ?? null]);
+  return match;
+}
