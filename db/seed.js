@@ -3,7 +3,6 @@ import { createUser } from "#db/queries/users";
 import { createWord } from "#db/queries/words";
 import { createLobby, addPlayerToLobby } from "#db/queries/lobby";
 
-await db.connect();
 await seed();
 await db.end();
 console.log("🌱 Database seeded.");
