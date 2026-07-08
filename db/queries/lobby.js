@@ -11,7 +11,7 @@ function generateCode(length = 6) {
 
 /** Creates a lobby hosted by the given user and seats them as a player. */
 export async function createLobby(hostId, options = {}) {
-  const { maxRounds = 6, winScore = 4, isPrivate = true } = options;
+  const { maxRounds = 6, winScore = 500, isPrivate = true } = options;
 
   // Retry on the rare unique-code collision.
   for (let attempt = 0; attempt < 5; attempt++) {
