@@ -36,7 +36,7 @@ CREATE TABLE lobby (
     status      TEXT NOT NULL DEFAULT 'lobby'
                 CHECK (status IN ('lobby', 'in_progress', 'finished')),
     max_rounds  INTEGER NOT NULL DEFAULT 6,
-    win_score   INTEGER NOT NULL DEFAULT 4,
+    win_score   INTEGER NOT NULL DEFAULT 500,
     is_private  BOOLEAN NOT NULL DEFAULT true,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
