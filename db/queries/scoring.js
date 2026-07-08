@@ -43,6 +43,8 @@ export async function submitGuess({ round, word, userId, message }) {
       [round.id, userId, message, correct, points],
     );
 
+    let allGuessersCorrect = false;
+
     if (correct) {
       await client.query(
         `UPDATE match_players SET score = score + $3 WHERE match_id = $1 AND user_id = $2`,
@@ -52,10 +54,29 @@ export async function submitGuess({ round, word, userId, message }) {
         `UPDATE match_players SET score = score + $3 WHERE match_id = $1 AND user_id = $2`,
         [round.match_id, round.drawer_id, drawerBonus],
       );
+
+      // Once every non-drawer player in the match has correctly guessed
+      // this round's word, there's no reason to keep waiting on the
+      // clock — let the caller end the round immediately.
+      const {
+        rows: [{ count: totalGuessers }],
+      } = await client.query(
+        `SELECT COUNT(*)::int AS count FROM match_players
+         WHERE match_id = $1 AND user_id != $2`,
+        [round.match_id, round.drawer_id],
+      );
+      const {
+        rows: [{ count: correctGuessers }],
+      } = await client.query(
+        `SELECT COUNT(DISTINCT user_id)::int AS count FROM chat_messages
+         WHERE round_id = $1 AND is_correct_guess = true`,
+        [round.id],
+      );
+      allGuessersCorrect = totalGuessers > 0 && correctGuessers >= totalGuessers;
     }
 
     await client.query("COMMIT");
-    return { chatMessage, correct, points, drawerBonus };
+    return { chatMessage, correct, points, drawerBonus, allGuessersCorrect };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
